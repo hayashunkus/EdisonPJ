@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+    background: #f5f2eb;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Yu Gothic", Meiryo, sans-serif;
+}
+
+#root {
+    min-height: 100vh;
+}
