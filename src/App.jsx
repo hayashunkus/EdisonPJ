@@ -209,13 +209,12 @@ function TreasureGoogleMap({ apiKey, chestCoords, fuzzyOffset, distanceM, player
         ].forEach(ring => {
             const circle = new window.google.maps.Circle({
                 strokeColor: "#b45309",
-                strokeOpacity: ring.strokeOpacity,
                 strokeWeight: 2,
                 fillColor: "#d97706",
                 fillOpacity: ring.fillOpacity,
-                map,
-                center: fuzzyCenter,
-                radius: ring.radius,
+                map: mapInstance,
+                center: chestCoords, // ESP32から受信した緯度経度
+                radius: ring.radius
             });
             circlesRef.current.push(circle);
         });
