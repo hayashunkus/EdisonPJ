@@ -1,17 +1,17 @@
-// src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Map, Compass, BookOpen, Key, Settings, Navigation,
-    RefreshCw, Lock, Unlock, Radio
+    RefreshCw, Lock, Unlock, Radio, CheckCircle2
 } from 'lucide-react';
 import {
     isFirebaseConfigured,
     generateQuizViaFirebase,
-    subscribeChestGps
+    subscribeChestGps,
+    setChestUnlocked,
 } from './firebase';
 
 // ==========================================
-// 1. Colabから移植：距離に応じたフェーズ判定関数
+// 1. 距離に応じたフェーズ判定関数
 // ==========================================
 export function choosePhase(distanceM) {
     const d = Number(distanceM);
@@ -53,7 +53,7 @@ export function choosePhase(distanceM) {
 }
 
 // ==========================================
-// 2. Colabから移植：プロンプト構築
+// 2. プロンプト構築
 // ==========================================
 export function buildPrompt(region, distanceM, phaseInfo, difficulty = "やさしめ") {
     return `あなたは愛知県を舞台にした位置連動型宝探しゲーム「EdisonPJ」のクイズ作成担当です。
@@ -89,7 +89,6 @@ export function buildPrompt(region, distanceM, phaseInfo, difficulty = "やさ�
 }`;
 }
 
-// 紙地図・フィールドノート風Googleマップスタイル
 const FIELD_NOTE_MAP_STYLE = [
     { elementType: "geometry", stylers: [{ color: "#efe9dd" }] },
     { elementType: "labels.text.fill", stylers: [{ color: "#5c4d3c" }] },
@@ -106,6 +105,15 @@ const FIELD_NOTE_MAP_STYLE = [
 
 const PRESET_AREAS = [
     {
+        id: "anywhere",
+        name: "フリー探索・ESP32連携モード",
+        regionPrompt: "愛知県（名古屋市および尾張・三河地域）",
+        chestCoords: { lat: 35.1850, lng: 136.8996 },
+        fuzzyOffset: { lat: -0.0007, lng: 0.0008 },
+        code: ["2", "0", "2", "6"],
+        story: "ESP32が発信するGPS信号を追跡する探索モード。GPS未接続の間はデフォルトマップが表示され、接続されると自動更新されます。"
+    },
+    {
         id: "nagoyacastle",
         name: "名古屋市中区・名古屋城エリア",
         regionPrompt: "愛知県尾張地域と名古屋市（名古屋城周辺）",
@@ -120,7 +128,7 @@ const PRESET_AREAS = [
         regionPrompt: "愛知県名古屋市昭和区（鶴舞公園・名古屋工業大学周辺）",
         chestCoords: { lat: 35.1554, lng: 136.9204 },
         fuzzyOffset: { lat: 0.0009, lng: -0.0008 },
-        code: ["1", "6", "1", "0"],
+        code: ["3", "8", "1", "6"],
         story: "明治42年に開園した歴史ある洋風庭園と日本庭園が交差する場所。かつての博覧会の記憶を辿り、噴水塔の近くで発信されている微弱なGPS信号を頼りに木箱を見つけ出そう。"
     },
     {
@@ -129,25 +137,15 @@ const PRESET_AREAS = [
         regionPrompt: "愛知県犬山市（国宝犬山城・城下町・木曽川周辺）",
         chestCoords: { lat: 35.3883, lng: 136.9392 },
         fuzzyOffset: { lat: 0.0007, lng: 0.0007 },
-        code: ["1", "6", "1", "0"],
+        code: ["1", "5", "3", "7"],
         story: "木曽川のほとりにそびえる現存天守と、古い町並みが残る犬山エリア。城下町の通りを歩きながら地域の歴史を紐解き、4桁の南京錠を解錠しよう。"
-    },
-    {
-        id: "anywhere",
-        name: "名古屋工業大学",
-        regionPrompt: "愛知県名古屋市（名古屋工業大学周辺）",
-        chestCoords: { lat: 35.1554, lng: 136.9204 },
-        fuzzyOffset: { lat: 0.0009, lng: -0.0008 },
-        code: ["1", "6", "1", "0"],
-        story: "名古屋工業大学の周辺に隠された探索ボックスを調査せよ。"
     }
-
 ];
 
 // ==========================================
-// 3. Google Maps コンポーネント（波紋オーバーレイ付き）
+// 3. デフォルト画面 兼 Google Maps コンポーネント
 // ==========================================
-function TreasureGoogleMap({ apiKey, chestCoords, fuzzyOffset, distanceM, playerCoords }) {
+function TreasureGoogleMap({ apiKey, chestCoords, fuzzyOffset, distanceM, playerCoords, isGpsLive }) {
     const mapContainerRef = useRef(null);
     const mapInstanceRef = useRef(null);
     const circlesRef = useRef([]);
@@ -156,6 +154,7 @@ function TreasureGoogleMap({ apiKey, chestCoords, fuzzyOffset, distanceM, player
 
     const phaseInfo = choosePhase(distanceM);
 
+    // Google Maps SDK 読み込み
     useEffect(() => {
         if (!apiKey) return;
         if (window.google && window.google.maps) {
@@ -176,6 +175,7 @@ function TreasureGoogleMap({ apiKey, chestCoords, fuzzyOffset, distanceM, player
         document.head.appendChild(script);
     }, [apiKey]);
 
+    // Googleマップの描画・更新
     useEffect(() => {
         if (!mapLoaded || !mapContainerRef.current || !window.google) return;
 
@@ -202,19 +202,23 @@ function TreasureGoogleMap({ apiKey, chestCoords, fuzzyOffset, distanceM, player
         circlesRef.current = [];
 
         const baseRadius = phaseInfo.circleRadius;
+        const strokeColor = isGpsLive ? "#059669" : "#b45309";
+        const fillColor = isGpsLive ? "#10b981" : "#d97706";
+
         [
             { radius: baseRadius, fillOpacity: 0.14, strokeOpacity: 0.5 },
             { radius: baseRadius * 0.65, fillOpacity: 0.18, strokeOpacity: 0.35 },
             { radius: baseRadius * 0.3, fillOpacity: 0.25, strokeOpacity: 0.2 },
         ].forEach(ring => {
             const circle = new window.google.maps.Circle({
-                strokeColor: "#b45309",
+                strokeColor,
+                strokeOpacity: ring.strokeOpacity,
                 strokeWeight: 2,
-                fillColor: "#d97706",
+                fillColor,
                 fillOpacity: ring.fillOpacity,
-                map: mapInstance,
-                center: chestCoords, // ESP32から受信した緯度経度
-                radius: ring.radius
+                map,
+                center: fuzzyCenter,
+                radius: ring.radius,
             });
             circlesRef.current.push(circle);
         });
@@ -233,27 +237,54 @@ function TreasureGoogleMap({ apiKey, chestCoords, fuzzyOffset, distanceM, player
                 strokeWeight: 3,
             }
         });
-    }, [mapLoaded, chestCoords, fuzzyOffset, distanceM, playerCoords]);
+    }, [mapLoaded, chestCoords, fuzzyOffset, distanceM, playerCoords, isGpsLive]);
 
-    if (!apiKey) {
+    // Maps APIキー未設定時またはロード前の「デフォルト探索マップ画面」
+    if (!apiKey || !mapLoaded) {
         return (
-            <div className="bg-[#efe9dd] border-2 border-dashed border-[#c8b99e] rounded-2xl p-6 text-center space-y-2">
-                <Map className="w-8 h-8 text-[#8c7355] mx-auto" />
-                <p className="text-sm font-bold">Google Maps APIキーが未設定です</p>
-                <p className="text-xs text-[#6e5f4f]">
-                    <code>.env.local</code> の <code>VITE_GOOGLE_MAPS_API_KEY</code> または右上の歯車から設定してください。
-                </p>
+            <div className="relative rounded-2xl overflow-hidden border-2 border-[#d6c9b4] bg-[#efe9dd] h-80 flex flex-col items-center justify-center p-6 text-center space-y-3">
+                {/* レーダー波紋のCSSアニメーション */}
+                <div className="relative w-28 h-28 flex items-center justify-center">
+                    <div className="absolute inset-0 rounded-full border-2 border-amber-700/30 animate-ping" />
+                    <div className="absolute inset-3 rounded-full border-2 border-amber-800/40" />
+                    <div className="w-12 h-12 rounded-full bg-amber-800 text-amber-50 flex items-center justify-center font-bold shadow-md">
+                        <Compass className="w-6 h-6 animate-spin" style={{ animationDuration: '8s' }} />
+                    </div>
+                </div>
+
+                <div>
+                    <p className="text-sm font-bold text-[#2e251d]">
+                        {isGpsLive ? "● ESP32 GPS受信中（マップ待機）" : "● デフォルト探索レーダー表示中"}
+                    </p>
+                    <p className="text-xs text-[#756554] mt-1">
+                        目標座標: {chestCoords.lat.toFixed(4)}, {chestCoords.lng.toFixed(4)}
+                    </p>
+                    <p className="text-[11px] text-[#8c7a66] mt-0.5">
+                        波紋エリア半径: 約{phaseInfo.circleRadius}m
+                    </p>
+                </div>
+
+                {!apiKey && (
+                    <p className="text-[10px] text-amber-900 bg-amber-100/80 px-3 py-1 rounded-full">
+                        ※右上の歯車（⚙）にGoogle Mapsキーを入力すると背景が詳細地図に切り替わります
+                    </p>
+                )}
             </div>
         );
     }
 
+    // Google Maps が読み込まれた後の本番マップ
     return (
         <div className="relative rounded-2xl overflow-hidden border-2 border-[#d6c9b4] shadow-inner">
             <div ref={mapContainerRef} className="w-full h-80 bg-[#efe9dd]" />
             <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_24px_rgba(92,77,60,0.25)]" />
             <div className="absolute top-3 left-3 bg-[#fdfbf7]/90 backdrop-blur-sm border border-[#d6c9b4] px-3 py-1.5 rounded-lg text-xs text-[#4a3f35] shadow-sm">
-                <span className="font-bold text-amber-800">● 波紋エリア半径: 約{phaseInfo.circleRadius}m</span>
-                <span className="block text-[10px] text-[#786856]">※中心点が宝箱の厳密な位置とは限りません</span>
+                <span className={`font-bold ${isGpsLive ? "text-emerald-700" : "text-amber-800"}`}>
+                    {isGpsLive ? "● ESP32 GPS同期中 (LIVE)" : "● デフォルト座標表示中"}
+                </span>
+                <span className="block text-[10px] text-[#786856]">
+                    波紋エリア半径: 約{phaseInfo.circleRadius}m
+                </span>
             </div>
         </div>
     );
@@ -266,14 +297,21 @@ export default function App() {
     const [mapsKey, setMapsKey] = useState(
         () => import.meta.env.VITE_GOOGLE_MAPS_API_KEY || localStorage.getItem("edison_maps_key") || ""
     );
+    const [geminiKey, setGeminiKey] = useState(
+        () => import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem("edison_gemini_key") || ""
+    );
+
     const [activeTab, setActiveTab] = useState("home");
     const [showSettings, setShowSettings] = useState(false);
 
     const [selectedAreaId, setSelectedAreaId] = useState("anywhere");
     const currentArea = PRESET_AREAS.find(a => a.id === selectedAreaId) || PRESET_AREAS[0];
 
-    // ESP32（Firebase Realtime DB）から受信した宝箱座標があれば上書き
+    // ESP32から受信したGPSデータ（初期状態はnull）
     const [liveChestData, setLiveChestData] = useState(null);
+    const isChestGpsLive = Boolean(liveChestData);
+
+    // GPSが未接続ならプリセット座標、接続されたらESP32のリアル座標を使用
     const effectiveChestCoords = liveChestData
         ? { lat: liveChestData.lat, lng: liveChestData.lng }
         : currentArea.chestCoords;
@@ -321,13 +359,19 @@ export default function App() {
         return () => unsubscribe();
     }, [selectedAreaId]);
 
-    // Firebase AI Logic (Gemini) でクイズを生成
+    // 南京錠を開ける処理（Firebaseへ解錠フラグを送り、ESP32の距離センサーを有効化）
+    const handleUnlockChest = async () => {
+        setChestOpened(true);
+        await setChestUnlocked(selectedAreaId, true);
+    };
+
+    // クイズ生成処理
     const handleGenerateQuiz = async () => {
         setIsGenerating(true);
         setGenError("");
         try {
             const prompt = buildPrompt(currentArea.regionPrompt, distanceM, phaseInfo, difficulty);
-            const rawText = await generateQuizViaFirebase(prompt);
+            const rawText = await generateQuizViaFirebase(prompt, geminiKey);
             const jsonMatch = rawText.match(/\{[\s\S]*\}/);
             if (!jsonMatch) throw new Error("JSONの抽出に失敗しました");
             const parsed = JSON.parse(jsonMatch[0]);
@@ -345,7 +389,7 @@ export default function App() {
             ]);
             setActiveTab("quiz");
         } catch (err) {
-            setGenError(err.message || "Firebase経由でのクイズ生成に失敗しました。");
+            setGenError(err.message || "クイズ生成に失敗しました。");
         } finally {
             setIsGenerating(false);
         }
@@ -379,10 +423,12 @@ export default function App() {
                     <div>
                         <h1 className="text-sm font-bold text-[#2e251d]">Edison フィールド手帳</h1>
                         <p className="text-[11px] text-[#756554] flex items-center gap-1">
-                            <Radio className={`w-3 h-3 ${isFirebaseConfigured ? "text-emerald-700" : "text-amber-700"}`} />
-                            {isFirebaseConfigured
-                                ? liveChestData ? "ESP32 GPS受信中 (Firebase)" : "Firebase接続済"
-                                : "ローカルデモモード"}
+                            <Radio className={`w-3 h-3 ${isChestGpsLive ? "text-emerald-700 animate-pulse" : "text-amber-700"}`} />
+                            {isChestGpsLive
+                                ? `ESP32 GPS受信中 (${liveChestData.lat.toFixed(4)}, ${liveChestData.lng.toFixed(4)})`
+                                : isFirebaseConfigured
+                                    ? "デフォルト待機中（ESP32 GPS待ち）"
+                                    : "ローカルデモモード"}
                         </p>
                     </div>
                 </div>
@@ -444,7 +490,20 @@ export default function App() {
                             </select>
                         </div>
                         <div>
-                            <label className="block font-bold mb-1">Google Maps APIキー（未設定時のみ）</label>
+                            <label className="block font-bold mb-1">Gemini APIキー</label>
+                            <input
+                                type="password"
+                                value={geminiKey}
+                                onChange={(e) => {
+                                    setGeminiKey(e.target.value);
+                                    localStorage.setItem("edison_gemini_key", e.target.value.trim());
+                                }}
+                                placeholder="AIzaSy..."
+                                className="w-full bg-white border border-[#d8cbb8] rounded-lg px-2.5 py-1.5"
+                            />
+                        </div>
+                        <div>
+                            <label className="block font-bold mb-1">Google Maps APIキー</label>
                             <input
                                 type="password"
                                 value={mapsKey}
@@ -452,7 +511,7 @@ export default function App() {
                                     setMapsKey(e.target.value);
                                     localStorage.setItem("edison_maps_key", e.target.value.trim());
                                 }}
-                                placeholder=".env.local設定済なら空欄でOK"
+                                placeholder="AIzaSy..."
                                 className="w-full bg-white border border-[#d8cbb8] rounded-lg px-2.5 py-1.5"
                             />
                         </div>
@@ -464,7 +523,13 @@ export default function App() {
                 {activeTab === "home" && (
                     <div className="space-y-4">
                         <section className="bg-[#fdfbf7] border border-[#d8cbb8] rounded-2xl p-4 shadow-sm space-y-2">
-                            <span className="text-xs font-bold text-amber-800">調査記録・ミッション</span>
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-amber-800">調査記録・ミッション</span>
+                                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${isChestGpsLive ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                                    }`}>
+                                    {isChestGpsLive ? "ESP32 GPS接続中" : "デフォルト待機中"}
+                                </span>
+                            </div>
                             <h2 className="text-base font-bold text-[#2e251d]">{currentArea.name}</h2>
                             <p className="text-xs leading-relaxed text-[#5c4d3c]">{currentArea.story}</p>
                         </section>
@@ -473,6 +538,17 @@ export default function App() {
                             <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-900/10 flex items-center justify-center text-amber-900">
                                 {chestOpened ? <Unlock className="w-7 h-7 text-emerald-700" /> : <Lock className="w-7 h-7" />}
                             </div>
+                            <div>
+                                <h3 className="font-bold text-sm">
+                                    {chestOpened ? "南京錠を解錠しました！" : "探索木箱の南京錠（4桁の鍵）"}
+                                </h3>
+                                <p className="text-xs text-[#6e5f4f] mt-0.5">
+                                    {chestOpened
+                                        ? "ESP32の距離センサー（30cm以内）が有効になりました！手を近づけてください。"
+                                        : "クイズに正解して4つの数字を揃えると解錠できます"}
+                                </p>
+                            </div>
+
                             <div className="flex justify-center gap-2.5">
                                 {currentArea.code.map((digit, i) => {
                                     const isVisible = unlockedDigits[i] || distanceM <= 30;
@@ -487,11 +563,11 @@ export default function App() {
                                 })}
                             </div>
                             <button
-                                onClick={() => setChestOpened(true)}
+                                onClick={handleUnlockChest}
                                 disabled={!unlockedDigits.every(Boolean) && distanceM > 30}
                                 className="w-full py-2.5 rounded-xl font-bold text-xs bg-amber-800 text-white disabled:bg-[#cfc4b0]"
                             >
-                                {chestOpened ? "解錠済み！" : "南京錠を開ける"}
+                                {chestOpened ? "✓ 解錠完了（ESP32に手を近づけてください）" : "南京錠を開ける"}
                             </button>
                         </section>
 
@@ -509,7 +585,7 @@ export default function App() {
                                 <RefreshCw className={`w-4 h-4 ${isGenerating ? "animate-spin" : ""}`} />
                                 <span>
                                     {isGenerating
-                                        ? "Firebase経由で問題を生成中..."
+                                        ? "問題を生成中..."
                                         : `現在地（${phaseInfo.name}）の問題を取得する`}
                                 </span>
                             </button>
@@ -524,6 +600,7 @@ export default function App() {
                         fuzzyOffset={currentArea.fuzzyOffset}
                         distanceM={distanceM}
                         playerCoords={playerCoords}
+                        isGpsLive={isChestGpsLive}
                     />
                 )}
 
