@@ -136,8 +136,8 @@ const PRESET_AREAS = [
         id: "anywhere",
         name: "名古屋工業大学",
         regionPrompt: "愛知県名古屋市（名古屋工業大学周辺）",
-        chestCoords: { lat: 35.1850, lng: 136.8996 },
-        fuzzyOffset: { lat: -0.0008, lng: 0.0010 },
+        chestCoords: { lat: 35.1554, lng: 136.9204 },
+        fuzzyOffset: { lat: 0.0009, lng: -0.0008 },
         code: ["1", "6", "1", "0"],
         story: "名古屋工業大学の周辺に隠された探索ボックスを調査せよ。"
     }
