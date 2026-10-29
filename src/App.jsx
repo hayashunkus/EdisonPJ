@@ -120,7 +120,7 @@ const PRESET_AREAS = [
         regionPrompt: "愛知県名古屋市昭和区（鶴舞公園・名古屋工業大学周辺）",
         chestCoords: { lat: 35.1554, lng: 136.9204 },
         fuzzyOffset: { lat: 0.0009, lng: -0.0008 },
-        code: ["3", "8", "1", "6"],
+        code: ["1", "6", "1", "0"],
         story: "明治42年に開園した歴史ある洋風庭園と日本庭園が交差する場所。かつての博覧会の記憶を辿り、噴水塔の近くで発信されている微弱なGPS信号を頼りに木箱を見つけ出そう。"
     },
     {
@@ -129,9 +129,19 @@ const PRESET_AREAS = [
         regionPrompt: "愛知県犬山市（国宝犬山城・城下町・木曽川周辺）",
         chestCoords: { lat: 35.3883, lng: 136.9392 },
         fuzzyOffset: { lat: 0.0007, lng: 0.0007 },
-        code: ["1", "5", "3", "7"],
+        code: ["1", "6", "1", "0"],
         story: "木曽川のほとりにそびえる現存天守と、古い町並みが残る犬山エリア。城下町の通りを歩きながら地域の歴史を紐解き、4桁の南京錠を解錠しよう。"
+    },
+    {
+        id: "anywhere",
+        name: "名古屋工業大学",
+        regionPrompt: "愛知県名古屋市（名古屋工業大学周辺）",
+        chestCoords: { lat: 35.1850, lng: 136.8996 },
+        fuzzyOffset: { lat: -0.0008, lng: 0.0010 },
+        code: ["1", "6", "1", "0"],
+        story: "名古屋工業大学の周辺に隠された探索ボックスを調査せよ。"
     }
+
 ];
 
 // ==========================================
@@ -260,7 +270,7 @@ export default function App() {
     const [activeTab, setActiveTab] = useState("home");
     const [showSettings, setShowSettings] = useState(false);
 
-    const [selectedAreaId, setSelectedAreaId] = useState("nagoyacastle");
+    const [selectedAreaId, setSelectedAreaId] = useState("anywhere");
     const currentArea = PRESET_AREAS.find(a => a.id === selectedAreaId) || PRESET_AREAS[0];
 
     // ESP32（Firebase Realtime DB）から受信した宝箱座標があれば上書き
