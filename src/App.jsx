@@ -107,7 +107,7 @@ async function generateQuizViaGemini(promptText) {
         throw new Error("環境変数 VITE_GEMINI_API_KEY が設定されていません。.env.local または GitHub Secrets を確認してください。");
     }
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
     const body = {
         systemInstruction: {
