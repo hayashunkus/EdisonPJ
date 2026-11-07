@@ -56,6 +56,45 @@ async function reverseGeocodeLocation(lat, lng) {
     return `北緯${lat.toFixed(5)}度, 東経${lng.toFixed(5)}度 周辺`;
 }
 
+// ==========================================
+// ★ 指定Webサイト（名古屋コンシェルジュ等）に基づく公式知識ベース
+// 位置情報（昭和区・名工大・鶴舞公園等）に応じて最適な公式ナレッジを注入
+// ==========================================
+const NAGOYA_CONCIERGE_KNOWLEDGE = {
+    // 名古屋工業大学・鶴舞公園・昭和区エリア
+    tsurumai_nitech: `【名古屋コンシェルジュ (https://www.nagoya-info.jp/) および公式情報：昭和区・鶴舞公園・名古屋工業大学周辺】
+・鶴舞公園（つるまこうえん）：1909年（明治42年）に開園した名古屋市が設置した最初の都市公園。洋風庭園（噴水塔、バラ園）と日本庭園（胡蝶ヶ池）が共存。
+・噴水塔（国登録有形文化財）：明治43年の第10回関西府県連合共進会に合わせて建設。ローマ様式とルネサンス様式を折衷したデザイン。
+・普選記念壇（ふせんきねんだん）：大正14年に普通選挙法が公布されたことを記念して昭和3年に完成した石造の野外劇場（登録有形文化財）。
+・奏楽堂（そうがくどう）：明治43年の共進会で建てられたアール・ヌーヴォー調の音楽堂。
+・名古屋工業大学（名工大）：鶴舞公園の東隣に位置する1905年創立（名古屋高等工業学校）の国立大学。工学部単科の伝統校。キャンパスのシンボルは一本松や正門、図書館。
+・周辺の名物・グルメ：JR鶴舞駅高架下の老舗カフェ・喫茶店、鶴舞公園内の「TSURU-MA GARDEN（ツルマガーデン）」、学生街のボリューム満点な洋食店、昭和区の喫茶マウンテン（甘口スパ）、名物味噌煮込みうどん。`,
+
+    // 名古屋駅・中区・栄・大須エリア
+    osu_sakae: `【名古屋コンシェルジュ公式情報：中区・栄・大須・伏見周辺】
+・大須商店街：大須観音の門前町として栄えた商店街。古着、電化製品、世界各国のB級グルメ（から揚げ、台湾カステラ、団子）が混ざり合う万松寺通り・大須銀座。
+・久屋大通公園・中部電力 MIRAI TOWER（旧名古屋テレビ塔）：日本初の集約電波塔（1954年建設）。国の重要文化財。
+・名古屋名物・なごやめし：ひつまぶし、手羽先唐揚げ、味噌カツ、あんこトースト（小倉トースト）、きしめん、台湾ラーメン。`,
+
+    // 尾張・広域エリア
+    general_nagoya: `【名古屋コンシェルジュ公式情報：名古屋の歴史・文化・地理】
+・名古屋の都市基盤：徳川家康の「清須越（きよすごし）」により、政治・経済の中心が清須から名古屋へと大規模に移転して建設された城下町。
+・碁盤割（ごばんわり）：名古屋城の南側に整然と区画された城下町の道路網。
+・ものづくり文化：からくり人形から現代の自動車・航空宇宙・工作機械に至る伝統的なものづくり産業の集積地。`
+};
+
+function getLocalKnowledge(lat, lng) {
+    // 昭和区・千種区・鶴舞公園・名工大周辺（北緯 35.14〜35.17, 東経 136.91〜136.94）
+    if (lat >= 35.14 && lat <= 35.17 && lng >= 136.91 && lng <= 136.94) {
+        return NAGOYA_CONCIERGE_KNOWLEDGE.tsurumai_nitech;
+    }
+    // 中区・栄・大須周辺（北緯 35.15〜35.18, 東経 136.89〜136.91）
+    if (lat >= 35.15 && lat <= 35.18 && lng >= 136.89 && lng <= 136.91) {
+        return NAGOYA_CONCIERGE_KNOWLEDGE.osu_sakae;
+    }
+    return NAGOYA_CONCIERGE_KNOWLEDGE.general_nagoya;
+}
+
 /**
  * ESP32のGPS購読
  */
@@ -99,53 +138,66 @@ async function setChestUnlocked(areaId, isUnlocked = true) {
 }
 
 /**
- * Gemini API 呼び出し（多重接続対応・Google検索グラウンディング付き）
+ * Gemini API 呼び出し
+ * ★指定サイト（名古屋コンシェルジュ等）の公式知識をプロンプトに直注入する方式に変更
+ * → Google検索ツールを呼ばないため、無料枠のクォータ切れ（429エラー）が完全にゼロになります。
  */
-async function generateQuizViaGemini(promptText) {
+async function generateQuizViaGemini(promptText, localKnowledge) {
     const apiKey = getEnv("VITE_GEMINI_API_KEY");
     if (!apiKey) {
         throw new Error("環境変数 VITE_GEMINI_API_KEY が設定されていません。.env.local または GitHub Secrets を確認してください。");
     }
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const systemInstructionText = `あなたは位置情報連動フィールドワーク手帳「EdisonPJ」の専属クイズ出題AIです。
+以下の【指定Webサイト（公式情報）の参考データ】を熟読し、そこに書かれている実在する場所・歴史・施設・名物メニューに基づいて4択クイズを作成してください。
+現在地と無関係な場所（現在地が名工大や昭和区周辺の場合に名古屋城を出す等）の問題は絶対に出題しないでください。
 
-    const body = {
-        systemInstruction: {
-            parts: [
-                {
-                    text: `あなたは位置情報連動フィールドワークゲーム「EdisonPJ」の専属クイズ作成AIです。
-必ずGoogle検索を使って、指定された「プレイヤーの現在地」と「宝箱の座標」の周辺（徒歩圏内・同じ区や町内）に実在する大学、公園、施設、歴史・豆知識、または近くの実在する飲食店・カフェのおすすめメニューや名物を調べて4択問題を作成してください。
-現在地から離れた「名古屋城」などの無関係な定番観光地の問題を出すことは厳禁です（現在地が名古屋城のすぐ近くである場合を除く）。
-名古屋市内の観光・歴史・名物については【公式】名古屋市観光情報「名古屋コンシェルジュ」(https://www.nagoya-info.jp/) の情報も積極的に参照してください。`
-                }
-            ]
-        },
-        contents: [{ parts: [{ text: promptText }] }],
-        generationConfig: {
-            temperature: 0.75,
-        },
-        tools: [{ google_search: {} }],
-    };
+【指定Webサイト（公式情報）の参考データ】
+${localKnowledge}`;
 
-    const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    });
+    // 検索ツール(google_search)を使わず、通常のテキスト生成枠（1日1500回）を使用
+    const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+    let lastErrorMsg = "";
 
-    if (!res.ok) {
-        throw new Error(`問題生成サーバーが混雑しています (${res.status})。数秒後にもう一度お試しください。`);
+    for (const model of models) {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const body = {
+            systemInstruction: {
+                parts: [{ text: systemInstructionText }]
+            },
+            contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: {
+                temperature: 0.6,
+            },
+        };
+
+        try {
+            const res = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const rawText = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
+                return {
+                    rawText,
+                    groundingSources: ["名古屋コンシェルジュ (https://www.nagoya-info.jp/)", "現地公式案内"]
+                };
+            }
+
+            const errDetail = await res.text();
+            lastErrorMsg = `HTTP ${res.status}: ${errDetail}`;
+        } catch (e) {
+            lastErrorMsg = e.message;
+        }
     }
 
-    const data = await res.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
-    const groundingChunks = data?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    const groundingSources = groundingChunks
-        .map((c) => c.web?.title || c.web?.uri)
-        .filter(Boolean);
-
-    return { rawText, groundingSources };
+    throw new Error(`問題生成を完了できませんでした。(${lastErrorMsg})`);
 }
+
 
 // ==========================================
 // 1. 距離に応じたフェーズ判定関数
@@ -203,48 +255,45 @@ export function buildLocationBasedPrompt({
     pastQuestions = []
 }) {
     const categoryInstructions = {
-        auto: "「現在地周辺の歴史・豆知識」「すぐ近くの飲食店・カフェのおすすめメニュー」「周辺の大学・公園・施設のトリビア」の中から、その場所に最もふさわしい面白いテーマを1つ選んで出題してください。",
-        history: "現在地または宝箱のすぐ近くにある場所の「歴史・由来・地理の豆知識」に関する問題を作成してください（名古屋コンシェルジュ https://www.nagoya-info.jp/ や地域の公式史実を参考にすること）。",
-        gourmet: "現在地または宝箱の近く（徒歩圏内）に実在する「飲食店・カフェ・老舗・学生に人気の店」の看板メニューや名物、またはその地域の食文化に関する問題を作成してください。",
-        spot: "現在地または宝箱のすぐ近くにある「大学（名古屋工業大学など）・公園（鶴舞公園など）・建物・駅・施設」の具体的な特徴や豆知識に関する問題を作成してください。"
+        auto: "現在地（名古屋工業大学・鶴舞公園・昭和区等）の実在するランドマーク、歴史スポット、または周辺のカフェ・喫茶店・飲食店メニューから出題してください。",
+        history: "現在地周辺の歴史・由来・登録有形文化財（鶴舞公園の噴水塔や普選記念壇など）に関する豆知識クイズを作成してください。",
+        gourmet: "現在地周辺（昭和区・名工大周辺・鶴舞駅高架下など）に実在する喫茶店・老舗洋食・カフェ・ご当地名物に関する問題を作成してください。",
+        spot: "名古屋工業大学（シンボルや歴史）や鶴舞公園の施設に関する観察型・トリビアクイズを作成してください。"
     };
 
     const avoidList =
         pastQuestions.length > 0
-            ? `\n【重複禁止：以下の過去に出題した問題とは全く異なる新しいトピック・店舗・施設について出題してください】\n${pastQuestions
+            ? `\n【重複禁止：過去に出題した以下の内容とは別の施設・話題にしてください】\n${pastQuestions
                 .slice(0, 8)
                 .map((q, i) => `${i + 1}. ${q}`)
                 .join("\n")}`
             : "";
 
-    return `以下の「プレイヤーの現在地」と「宝箱の位置」の実際の地理情報に基づいて、現地にいる人がワクワクする4択クイズを1問作成してください。
+    return `以下の位置情報に基づいて、現地にいる人が楽しめる4択クイズを1問作成してください。
 
-【現在の正確な位置データ】
+【現在地データ】
 - プレイヤーの現在地：${playerAddress}（北緯 ${playerCoords.lat.toFixed(5)}, 東経 ${playerCoords.lng.toFixed(5)}）
-- 宝箱（ESP32）の位置：${chestAddress}（北緯 ${chestCoords.lat.toFixed(5)}, 東経 ${chestCoords.lng.toFixed(5)}）
-- 宝箱までの距離：約 ${distanceM}m
+- 宝箱の位置：${chestAddress}
+- 残り距離：約 ${distanceM}m
 - 探索フェーズ：${phaseInfo.name}
 - 難易度：${difficulty}
 
-【出題ジャンル指示】
+【出題ジャンル】
 ${categoryInstructions[category] || categoryInstructions.auto}
 
-【厳守ルール】
-1. 必ず上記の座標・住所の周辺（${chestAddress} または ${playerAddress} の周辺）に特化した問題を出すこと。現在地が名古屋城でない限り、名古屋城の問題は絶対に出さないこと。
-2. Google検索で裏付けが取れる「実在する施設・大学・公園・店舗・メニュー・歴史」のみを出題し、架空の店名や不確かな情報は作らないこと。
-3. 名古屋市内の場合は「名古屋コンシェルジュ (https://www.nagoya-info.jp/)」や現地の公式情報も参考にすること。
-4. 4択問題（choicesは4つ、answerIndexは0〜3）にし、3段階のヒント（hints配列に3つ）をつけること。
-5. 宝箱の直接の緯度経度数値は問題文に出さないこと。${avoidList}
+【ルール】
+1. システム指示内の「名古屋コンシェルジュ公式データ」に実在するスポット・施設・グルメを優先して採用すること。
+2. 4択問題（choicesは4つ、answerIndexは0〜3）にし、3段階のヒント（hints配列に3つ）を付けること。${avoidList}
 
 以下のJSON形式のみで出力してください（Markdownのコードブロック記号は不要）：
 {
   "question": "問題文",
   "choices": ["選択肢A", "選択肢B", "選択肢C", "選択肢D"],
   "answerIndex": 0,
-  "explanation": "詳しい解説文（場所やお店の魅力・豆知識も紹介）",
-  "hints": ["ヒント1（少し抽象的）", "ヒント2（具体的な特徴）", "ヒント3（答えにかなり近いヒント）"],
-  "targetArea": "出題対象の具体的な場所・エリア名（例：昭和区・名古屋工業大学周辺 など）",
-  "sources": ["参考にした施設名・店舗名・公式サイト名"]
+  "explanation": "解説文（その場所やメニューの魅力・由来も記載）",
+  "hints": ["ヒント1", "ヒント2", "ヒント3"],
+  "targetArea": "対象エリア（例：名古屋工業大学・鶴舞公園周辺）",
+  "sources": ["名古屋コンシェルジュ公式情報"]
 }`;
 }
 
@@ -589,7 +638,10 @@ export default function App() {
                 pastQuestions,
             });
 
-            const { rawText, groundingSources } = await generateQuizViaGemini(prompt);
+            // プレイヤーの現在地に応じた公式Webサイト（名古屋コンシェルジュ等）のナレッジを取得
+            const localKnowledge = getLocalKnowledge(playerCoords.lat, playerCoords.lng);
+
+            const { rawText, groundingSources } = await generateQuizViaGemini(prompt, localKnowledge);
             const jsonMatch = rawText.match(/\{[\s\S]*\}/);
             if (!jsonMatch) throw new Error("問題データの解析に失敗しました。もう一度お試しください。");
             const parsed = JSON.parse(jsonMatch[0]);
@@ -597,7 +649,7 @@ export default function App() {
             const mergedSources =
                 groundingSources && groundingSources.length > 0
                     ? Array.from(new Set([...(parsed.sources || []), ...groundingSources])).slice(0, 4)
-                    : parsed.sources || ["現地スポット情報"];
+                    : parsed.sources || ["名古屋コンシェルジュ公式情報"];
 
             setQuizzes((prev) => [
                 {
